@@ -1184,6 +1184,80 @@ const SUPA_URL = 'https://deobwajfdrxzniavstbv.supabase.co';
 const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRlb2J3YWpmZHJ4em5pYXZzdGJ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0MzcxOTIsImV4cCI6MjA5OTAxMzE5Mn0.MNUHY4sZDiW4CxvuTuAMo8FNp73UXeQVa271bJBhtfU';
 const PASSWORD = 'tmg2026';
 
+// ─── GITHUB CONFIG ───────────────────────────────────────────────────
+const GH_TOKEN = sessionStorage.getItem('tmg_gh_token') || '';
+const GH_ORG   = 'thinkermedia';
+const GH_PAGES_BASE = 'https://thinkermedia.github.io';
+
+async function gh(path, opts = {}) {
+  const res = await fetch(`https://api.github.com/${path}`, {
+    headers: {
+      'Authorization': `token ${GH_TOKEN}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'TMG-Portal'
+    },
+    ...opts
+  });
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
+}
+
+// Create a new GitHub repo for a survey, enable Pages, return the live URL
+async function ghCreateSurveyRepo(repoName, description) {
+  // 1. Create repo
+  const repo = await gh(`orgs/${GH_ORG}/repos`, {
+    method: 'POST',
+    body: JSON.stringify({ name: repoName, description, private: false, auto_init: false })
+  });
+  if (!repo.full_name) throw new Error('Repo creation failed: ' + JSON.stringify(repo));
+
+  // 2. Push a placeholder index.html so Pages can be enabled
+  const placeholder = btoa(`<!DOCTYPE html><html><head><title>${repoName}</title></head><body><p>Survey coming soon.</p></body></html>`);
+  await gh(`repos/${GH_ORG}/${repoName}/contents/index.html`, {
+    method: 'PUT',
+    body: JSON.stringify({ message: 'Initial commit', content: placeholder })
+  });
+
+  // 3. Enable GitHub Pages from main branch
+  await gh(`repos/${GH_ORG}/${repoName}/pages`, {
+    method: 'POST',
+    body: JSON.stringify({ source: { branch: 'main', path: '/' } })
+  });
+
+  return `${GH_PAGES_BASE}/${repoName}`;
+}
+
+// Push survey HTML to its repo (create or update index.html)
+async function ghPushSurveyHTML(repoName, html, message) {
+  // Check if file exists to get SHA for update
+  let sha = null;
+  try {
+    const existing = await gh(`repos/${GH_ORG}/${repoName}/contents/index.html`);
+    sha = existing.sha || null;
+  } catch(e) { sha = null; }
+
+  const body = { message: message || 'Update survey', content: btoa(unescape(encodeURIComponent(html))) };
+  if (sha) body.sha = sha;
+
+  await gh(`repos/${GH_ORG}/${repoName}/contents/index.html`, {
+    method: 'PUT', body: JSON.stringify(body)
+  });
+}
+
+// Push updated portal index.html to TMG-Survey-Portal repo (triggers Netlify redeploy)
+async function ghUpdatePortal() {
+  try {
+    const html = document.documentElement.outerHTML;
+    const existing = await gh(`repos/${GH_ORG}/TMG-Survey-Portal/contents/index.html`);
+    await gh(`repos/${GH_ORG}/TMG-Survey-Portal/contents/index.html`, {
+      method: 'PUT',
+      body: JSON.stringify({ message: 'Portal auto-update', content: btoa(unescape(encodeURIComponent(html))), sha: existing.sha })
+    });
+    showToast('Portal pushed to GitHub', 'success');
+  } catch(e) { console.error('Portal push failed:', e); }
+}
+
 // In-memory cache -- loaded once on login, kept in sync on every write
 const DB = { surveys: [], fieldwork: {}, reports: [], assets: [], proposals: [] };
 
@@ -1488,15 +1562,27 @@ function showLibraryList() {
 async function openAddVersion(surveyId) {
   const label = prompt('Version label (e.g. "Q17 ranges fixed"):');
   if (!label) return;
-  const html = prompt('Paste HTML (leave blank to skip):') || '';
+  const html = prompt('Paste survey HTML (leave blank to skip):') || '';
   const s = DB.surveys.find(x => x.id === surveyId);
   if (!s) return;
   const nextV = (s.versions && s.versions.length > 0) ? Math.max(...s.versions.map(v => v.v)) + 1 : 1;
   if (!s.versions) s.versions = [];
-  s.versions.push({ v: nextV, label, date: new Date().toISOString().split('T')[0], html });
+  s.versions.push({ v: nextV, label, date: new Date().toISOString().split('T')[0] });
   try {
     await supa(`surveys?id=eq.${surveyId}`, { method: 'PATCH', body: JSON.stringify({ versions: JSON.stringify(s.versions) }) });
-    showSurveyDetail(surveyId); showToast('Version saved', 'success');
+    // Push HTML to GitHub if provided and repo exists
+    if (html && s.repo) {
+      const repoName = s.repo.replace(`https://github.com/${GH_ORG}/`, '');
+      try {
+        await ghPushSurveyHTML(repoName, html, `v${nextV}: ${label}`);
+        showToast(`v${nextV} saved + pushed to GitHub`, 'success');
+      } catch(e) {
+        showToast(`v${nextV} saved (GitHub push failed: ${e.message})`, 'error');
+      }
+    } else {
+      showToast('Version saved', 'success');
+    }
+    showSurveyDetail(surveyId);
   } catch(e) { showToast('Save failed: ' + e.message, 'error'); }
 }
 
@@ -1517,14 +1603,36 @@ async function saveSurvey() {
   const client = document.getElementById('sv-client').value.trim();
   if (!name || !client) { showToast('Survey name and client are required', 'error'); return; }
   const html = document.getElementById('sv-html').value.trim();
-  const versions = html ? [{ v: 1, label: 'Initial build', date: new Date().toISOString().split('T')[0], html }] : [];
+  const manualUrl = document.getElementById('sv-url').value.trim();
+  const manualRepo = document.getElementById('sv-repo').value.trim();
+
+  // Auto-generate repo name from survey name if no URL provided
+  const repoName = name.replace(/[^a-zA-Z0-9\s-]/g,'').trim().replace(/\s+/g,'-');
+  let liveUrl = manualUrl;
+  let repoUrl = manualRepo;
+
+  showToast('Creating project...', 'success');
+
+  // Auto-create GitHub repo if no URL specified
+  if (!liveUrl && html) {
+    try {
+      liveUrl = await ghCreateSurveyRepo(repoName, `${name} - ${client}`);
+      repoUrl = `https://github.com/${GH_ORG}/${repoName}`;
+      showToast('GitHub repo created', 'success');
+      // Push the HTML
+      await ghPushSurveyHTML(repoName, html, 'Initial survey build v1');
+      showToast('Survey HTML pushed to GitHub', 'success');
+    } catch(e) {
+      showToast('GitHub: ' + e.message, 'error');
+    }
+  }
+
+  const versions = html ? [{ v: 1, label: 'Initial build', date: new Date().toISOString().split('T')[0] }] : [];
   const record = {
     id: 's' + Date.now(), name, client,
     status: document.getElementById('sv-status').value,
     target: parseInt(document.getElementById('sv-target').value) || 0,
-    completes: 0,
-    url: document.getElementById('sv-url').value.trim(),
-    repo: document.getElementById('sv-repo').value.trim(),
+    completes: 0, url: liveUrl, repo: repoUrl,
     notes: document.getElementById('sv-notes').value.trim(),
     created: new Date().toISOString().split('T')[0],
     versions: JSON.stringify(versions)
@@ -1534,7 +1642,8 @@ async function saveSurvey() {
     DB.surveys.unshift(normaliseSurvey(record));
     closeModal('modal-add-survey');
     ['sv-name','sv-client','sv-url','sv-repo','sv-notes','sv-html','sv-target'].forEach(id => document.getElementById(id).value = '');
-    renderLibrary(); populateSurveySelects(); showToast('Survey added', 'success');
+    renderLibrary(); populateSurveySelects();
+    showToast('Survey created' + (liveUrl ? ' - GitHub Pages live in ~60s' : ''), 'success');
   } catch(e) { showToast('Save failed: ' + e.message, 'error'); }
 }
 
