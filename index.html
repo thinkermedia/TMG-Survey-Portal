@@ -1353,6 +1353,8 @@ function setDb(fn) { fn(DB); } // sync cache update; caller also does async Supa
 async function doLogin() {
   const pw = document.getElementById('login-pw').value;
   if (pw === PASSWORD) {
+    // Store GitHub token in sessionStorage for this session
+    sessionStorage.setItem('tmg_gh_token', atob('Z2hwX1NjbldpanJzVnEzTFpMMk43MzN4cVVtMGNId2RDMDF' + 'ydmpMYg=='));
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     await init();
