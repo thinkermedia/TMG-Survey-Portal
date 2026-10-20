@@ -717,7 +717,7 @@
     <div class="tab-panel" id="panel-studio">
       <div class="page-header">
         <h1>Data Studio</h1>
-        <p>Upload responses, generate prompts to run in Claude, paste outputs back to save reports</p>
+        <p>upload raw data QC file to generator to build the output type</p>
       </div>
 
       <div class="grid-2" style="align-items:start;">
@@ -759,7 +759,7 @@
             </div>
             <button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="generateStudioPrompt()">
               <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-              Generate Claude Prompt
+              Generate AI Assistant Prompt
             </button>
           </div>
         </div>
@@ -767,11 +767,11 @@
         <div>
           <div class="card">
             <div class="card-header">
-              <div class="card-title">Step 2 — Run in Claude &amp; paste output</div>
+              <div class="card-title">Step 2 — Run in AI Assistant &amp; paste output</div>
             </div>
             <div id="studio-prompt-area" style="display:none;">
               <div class="prompt-box">
-                <div class="prompt-box-label">Copy this prompt → paste into Claude.ai</div>
+                <div class="prompt-box-label">Copy this prompt → paste into your AI assistant</div>
                 <textarea id="studio-prompt-text" readonly></textarea>
                 <div class="prompt-box-actions">
                   <button class="btn-copy-prompt" onclick="copyPrompt()">
@@ -783,8 +783,8 @@
 
               <hr class="divider" />
               <div class="form-group">
-                <label class="form-label">Paste Claude's output here</label>
-                <textarea class="form-textarea" id="studio-output-paste" style="min-height:160px;" placeholder="Paste the full response from Claude here..."></textarea>
+                <label class="form-label">Paste AI assistant's output here</label>
+                <textarea class="form-textarea" id="studio-output-paste" style="min-height:160px;" placeholder="Paste the full response from the AI assistant here..."></textarea>
               </div>
               <div class="form-row">
                 <div class="form-group">
